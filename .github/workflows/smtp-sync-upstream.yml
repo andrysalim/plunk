@@ -160,8 +160,9 @@ jobs:
           docker run --rm --network host --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z \
             -c "mc alias set local http://localhost:9000 plunk plunkminiopass && mc mb local/uploads --ignore-existing"
 
+      # Through turbo, so every workspace package the API imports (e.g. @plunk/email) is built first
       - name: Type-check the API
-        run: yarn workspace api build
+        run: yarn build --filter="api"
 
       - name: Run full test suite
         run: yarn test:run
@@ -211,17 +212,26 @@ jobs:
     if: failure()
     runs-on: ubuntu-latest
     steps:
-      - name: Open an issue
+      - name: Report the failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST: ${{ needs.rebase.outputs.latest }}
         run: |
           title="SMTP fork: upstream ${LATEST:-release} needs attention"
-          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number -q '.[0].number' | grep -q .; then
-            echo "Issue already open"; exit 0
-          fi
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "The sync to upstream ${LATEST:-release} failed, so nothing was published and the \`smtp\` branch and image were left unchanged.
+          body="The sync to upstream ${LATEST:-release} failed, so nothing was published and the \`smtp\` branch and image were left unchanged.
 
           Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           If the rebase conflicted, rebase \`smtp\` onto the new tag locally, resolve the conflict (usually in \`apps/api/src/services/SESService.ts\` or \`apps/api/src/app/constants.ts\`), push, and re-run this workflow."
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          # Forks have Issues turned off by default; the summary above and GitHub's
+          # failed-run email still reach you, so a missing issue is not an error.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" -q .has_issues)" != "true" ]; then
+            echo "::warning::Issues are disabled on this repository; enable them in Settings to get an issue per failure."
+            exit 0
+          fi
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number -q '.[0].number' | grep -q .; then
+            echo "Issue already open"; exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" || echo "::warning::Could not open an issue"
