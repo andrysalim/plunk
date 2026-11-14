@@ -1,0 +1,227 @@
+# Keeps this fork's SMTP provider on top of the latest upstream Plunk release.
+#
+# Daily (or on demand) it:
+#   1. Finds the newest upstream release tag (vX.Y.Z).
+#   2. Replays the SMTP commits from the `smtp` branch onto that tag, on a
+#      separate `smtp-candidate` branch. `smtp` itself is not touched yet.
+#   3. Runs the full upstream test suite plus a type-check against the candidate.
+#   4. Only if everything passes: moves `smtp` to the candidate, tags it
+#      vX.Y.Z-smtp, and publishes ghcr.io/<owner>/plunk-smtp:vX.Y.Z-smtp (+ :latest).
+#   5. If the replay conflicts or a test fails, it opens an issue and publishes
+#      nothing, so a release that breaks the patch never reaches your server.
+#
+# Setup: make `smtp` the default branch of your fork (scheduled workflows only run
+# from the default branch) and enable Actions on the fork.
+name: SMTP fork - sync upstream release
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if already on the latest release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+
+concurrency:
+  group: smtp-sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/useplunk/plunk.git
+  PATCH_BRANCH: smtp
+  CANDIDATE_BRANCH: smtp-candidate
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.versions.outputs.latest }}
+      changed: ${{ steps.versions.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PATCH_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch upstream --tags --force
+
+      - name: Compare current base with latest release
+        id: versions
+        run: |
+          latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          current=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]' HEAD)
+          echo "current=$current latest=$latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$current" != "$latest" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Replay SMTP commits onto the new release
+        if: steps.versions.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$CANDIDATE_BRANCH"
+          if ! git rebase --onto "${{ steps.versions.outputs.latest }}" "${{ steps.versions.outputs.current }}"; then
+            git status --short > conflicts.txt || true
+            git rebase --abort
+            echo "::error::SMTP patch does not apply cleanly to ${{ steps.versions.outputs.latest }}"
+            cat conflicts.txt
+            exit 1
+          fi
+          git push --force origin "$CANDIDATE_BRANCH"
+
+  test:
+    needs: rebase
+    if: needs.rebase.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: plunk_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_BRANCH }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: corepack enable && yarn install --immutable
+
+      - name: Write test environment
+        run: |
+          cat > .env << EOF
+          NODE_ENV=test
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/plunk_test
+          DIRECT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/plunk_test
+          REDIS_URL=redis://localhost:6379
+          JWT_SECRET=test-jwt-secret-for-ci-only
+          S3_ENDPOINT=http://localhost:9000
+          S3_ACCESS_KEY_ID=plunk
+          S3_ACCESS_KEY_SECRET=plunkminiopass
+          S3_BUCKET=uploads
+          S3_PUBLIC_URL=http://localhost:9000/uploads
+          S3_FORCE_PATH_STYLE=true
+          API_URI=http://localhost:8080
+          DASHBOARD_URI=http://localhost:3000
+          LANDING_URI=http://localhost:4000
+          WIKI_URI=http://localhost:1000
+          AWS_SES_REGION=us-east-1
+          AWS_SES_ACCESS_KEY_ID=mock
+          AWS_SES_SECRET_ACCESS_KEY=mock
+          SES_CONFIGURATION_SET=test
+          SES_CONFIGURATION_SET_NO_TRACKING=test-no-tracking
+          EOF
+
+      - name: Build shared packages and database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/plunk_test
+          DIRECT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/plunk_test
+        run: |
+          yarn build --filter="@plunk/db" --filter="@plunk/types" --filter="@plunk/shared"
+          yarn workspace @plunk/db db:generate
+          yarn workspace @plunk/db migrate:prod
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=plunk -e MINIO_ROOT_PASSWORD=plunkminiopass \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for i in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 2; done
+          docker run --rm --network host --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z \
+            -c "mc alias set local http://localhost:9000 plunk plunkminiopass && mc mb local/uploads --ignore-existing"
+
+      - name: Type-check the API
+        run: yarn workspace api build
+
+      - name: Run full test suite
+        run: yarn test:run
+        env:
+          NODE_ENV: test
+
+  publish:
+    needs: [rebase, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_BRANCH }}
+          fetch-depth: 0
+
+      - name: Promote candidate and tag the release
+        run: |
+          tag="${{ needs.rebase.outputs.latest }}-smtp"
+          git push --force origin "HEAD:refs/heads/$PATCH_BRANCH"
+          git tag -f "$tag"
+          git push --force origin "refs/tags/$tag"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/plunk-smtp" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.rebase.outputs.latest }}-smtp
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  report-failure:
+    needs: [rebase, test, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ needs.rebase.outputs.latest }}
+        run: |
+          title="SMTP fork: upstream ${LATEST:-release} needs attention"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number -q '.[0].number' | grep -q .; then
+            echo "Issue already open"; exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "The sync to upstream ${LATEST:-release} failed, so nothing was published and the \`smtp\` branch and image were left unchanged.
+
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          If the rebase conflicted, rebase \`smtp\` onto the new tag locally, resolve the conflict (usually in \`apps/api/src/services/SESService.ts\` or \`apps/api/src/app/constants.ts\`), push, and re-run this workflow."

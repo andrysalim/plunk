@@ -27,7 +27,25 @@ Set your subdomains here. The application automatically derives all internal and
 | `WIKI_DOMAIN`      | Yes      | Subdomain for the documentation site.                                                                                | `docs.yourdomain.com` |
 | `USE_HTTPS`        | No       | Set to `true` when running behind a TLS-terminating reverse proxy. Used to construct URLs with the correct protocol. | `false` (default)     |
 
+## Outbound SMTP
+
+Send through any SMTP server instead of AWS SES. With `EMAIL_PROVIDER=smtp`, the AWS SES variables below are not required. SMTP mode does not receive bounce, complaint, delivery, open or click events (those come from SES), every added domain is treated as verified, and DKIM/SPF must be configured at your SMTP provider. The official image does not include this provider: build from this fork, for example with `docker compose -f docker-compose.yml -f docker-compose.smtp.yml up -d --build`.
+
+| Variable                                | Required             | Description                                                                                            | Example            |
+| --------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------ | ------------------ |
+| `EMAIL_PROVIDER`                        | No                   | `ses` or `smtp`. Any other value stops the API from starting.                                          | `ses` (default)    |
+| `OUTBOUND_SMTP_HOST`                    | With `smtp` provider | SMTP server hostname.                                                                                  | `smtp.example.com` |
+| `OUTBOUND_SMTP_PORT`                    | No                   | SMTP port. `465` uses implicit TLS; on other ports STARTTLS is required when a username is set.        | `587` (default)    |
+| `OUTBOUND_SMTP_SECURE`                  | No                   | Force implicit TLS on or off. Defaults to `true` on port 465, otherwise `false` (STARTTLS).               | —                  |
+| `OUTBOUND_SMTP_USER`                    | No                   | SMTP username. Leave empty for servers without authentication.                                         | —                  |
+| `OUTBOUND_SMTP_PASS`                    | No                   | SMTP password.                                                                                         | —                  |
+| `OUTBOUND_SMTP_ENVELOPE_FROM`           | No                   | Envelope sender (bounce address). Defaults to the email's From address.                                | —                  |
+| `OUTBOUND_SMTP_MAX_SEND_RATE`           | No                   | Emails per second, used in place of the SES quota. `EMAIL_RATE_LIMIT_PER_SECOND` still takes priority. | `5` (default)      |
+| `OUTBOUND_SMTP_TLS_REJECT_UNAUTHORIZED` | No                   | Set to `false` only for a server with a self-signed certificate.                                       | `true` (default)   |
+
 ## AWS SES
+
+Required unless `EMAIL_PROVIDER=smtp`.
 
 | Variable                            | Required | Description                                                                                                                                      | Example                                         |
 | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |

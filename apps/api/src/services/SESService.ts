@@ -19,17 +19,22 @@ import {
   htmlToPlainText,
 } from '../utils/mime.js';
 
+import {EMAIL_PROVIDER, createSmtpSesClient, readOutboundSmtpConfig} from './SmtpSesClient.js';
+
 /**
- * AWS SES Client
+ * AWS SES Client (or an SMTP-backed stand-in when EMAIL_PROVIDER=smtp, see SmtpSesClient.ts)
  */
-export const ses = new SES({
-  apiVersion: '2010-12-01',
-  region: AWS_SES_REGION,
-  credentials: {
-    accessKeyId: AWS_SES_ACCESS_KEY_ID,
-    secretAccessKey: AWS_SES_SECRET_ACCESS_KEY,
-  },
-});
+export const ses: SES =
+  EMAIL_PROVIDER === 'smtp'
+    ? createSmtpSesClient(readOutboundSmtpConfig())
+    : new SES({
+        apiVersion: '2010-12-01',
+        region: AWS_SES_REGION,
+        credentials: {
+          accessKeyId: AWS_SES_ACCESS_KEY_ID,
+          secretAccessKey: AWS_SES_SECRET_ACCESS_KEY,
+        },
+      });
 
 /**
  * AWS STS Client, used only to look up the account the SES credentials belong to

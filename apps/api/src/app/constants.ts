@@ -45,10 +45,12 @@ export const S3_PREFIX = validateEnv('S3_PREFIX', '')
   .replace(/^\/+|\/+$/g, '');
 export const S3_ENABLED = S3_ACCESS_KEY_ID !== '' && S3_ACCESS_KEY_SECRET !== '';
 
-// AWS SES (required for email sending)
-export const AWS_SES_REGION = validateEnv('AWS_SES_REGION');
-export const AWS_SES_ACCESS_KEY_ID = validateEnv('AWS_SES_ACCESS_KEY_ID');
-export const AWS_SES_SECRET_ACCESS_KEY = validateEnv('AWS_SES_SECRET_ACCESS_KEY');
+// AWS SES (required for email sending, unless EMAIL_PROVIDER=smtp)
+const SES_OPTIONAL = process.env.EMAIL_PROVIDER?.trim().toLowerCase() === 'smtp' ? '' : undefined;
+// The AWS clients refuse to construct without a region, so SMTP mode gets a placeholder that is never called
+export const AWS_SES_REGION = validateEnv('AWS_SES_REGION', SES_OPTIONAL === undefined ? undefined : 'us-east-1');
+export const AWS_SES_ACCESS_KEY_ID = validateEnv('AWS_SES_ACCESS_KEY_ID', SES_OPTIONAL);
+export const AWS_SES_SECRET_ACCESS_KEY = validateEnv('AWS_SES_SECRET_ACCESS_KEY', SES_OPTIONAL);
 
 // Custom MAIL FROM subdomain used to construct `<subdomain>.<your-domain>`
 // when a domain is added. Defaults to `plunk`. Override when `plunk.<your-domain>`

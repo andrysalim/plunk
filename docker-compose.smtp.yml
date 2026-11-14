@@ -1,0 +1,23 @@
+# Override for sending through any SMTP server instead of AWS SES.
+#
+# Usage (from the repository root):
+#   docker compose -f docker-compose.yml -f docker-compose.smtp.yml up -d --build
+#
+# The upstream compose file pulls the official image, which has no SMTP provider.
+# This override builds the image from this fork instead, or uses the one your
+# fork's "Sync upstream" workflow publishes if you set PLUNK_IMAGE.
+services:
+  plunk:
+    image: ${PLUNK_IMAGE:-plunk-smtp:local}
+    build:
+      context: .
+    environment:
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      OUTBOUND_SMTP_HOST: ${OUTBOUND_SMTP_HOST:?Set OUTBOUND_SMTP_HOST in .env}
+      OUTBOUND_SMTP_PORT: ${OUTBOUND_SMTP_PORT:-587}
+      OUTBOUND_SMTP_SECURE: ${OUTBOUND_SMTP_SECURE:-}
+      OUTBOUND_SMTP_USER: ${OUTBOUND_SMTP_USER:-}
+      OUTBOUND_SMTP_PASS: ${OUTBOUND_SMTP_PASS:-}
+      OUTBOUND_SMTP_ENVELOPE_FROM: ${OUTBOUND_SMTP_ENVELOPE_FROM:-}
+      OUTBOUND_SMTP_MAX_SEND_RATE: ${OUTBOUND_SMTP_MAX_SEND_RATE:-5}
+      OUTBOUND_SMTP_TLS_REJECT_UNAUTHORIZED: ${OUTBOUND_SMTP_TLS_REJECT_UNAUTHORIZED:-true}

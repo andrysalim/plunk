@@ -8268,6 +8268,7 @@ __metadata:
     mailparser: "npm:^3.9.8"
     morgan: "npm:^1.12.1"
     multer: "npm:^2.5.0"
+    nodemailer: "npm:10.2.1"
     sanitize-html: "npm:^2.17.7"
     signale: "npm:^1.4.0"
     stripe: "npm:^20.0.0"
@@ -15471,6 +15472,13 @@ __metadata:
   version: 2.0.27
   resolution: "node-releases@npm:2.0.27"
   checksum: 10c0/f1e6583b7833ea81880627748d28a3a7ff5703d5409328c216ae57befbced10ce2c991bea86434e8ec39003bd017f70481e2e5f8c1f7e0a7663241f81d6e00e2
+  languageName: node
+  linkType: hard
+
+"nodemailer@npm:10.2.1":
+  version: 10.2.1
+  resolution: "nodemailer@npm:10.2.1"
+  checksum: 10c0/c5268903736b8070e8b421142ff8f18229018e7c80da76f5593a796398537d3badd3091484303a084431cfd147b7315f2570b9087f26f63b966972cdff86c9d0
   languageName: node
   linkType: hard
 
